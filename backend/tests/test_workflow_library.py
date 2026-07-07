@@ -11,13 +11,15 @@ import pytest
 
 import asyncio
 
-import app.modules.contracts.agents  # noqa: F401 — registers nda_reviewer v2
+import app.modules.contracts.agents  # noqa: F401 — nda_reviewer + contract_risk_reviewer v2
+import app.modules.matter.agents  # noqa: F401 — trademark_clearance_reviewer
+import app.modules.spend.agents  # noqa: F401 — counterparty_screener v2
 from app.workflow.agents import get_workflow_agent
+from app.modules.spend.agents.vendor import counterparty_screener
 from app.workflow.library import (
     REQUEST_TYPES,
     WORKFLOW_LIBRARY,
     classify,
-    counterparty_screener,
 )
 
 

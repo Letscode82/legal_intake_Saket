@@ -29,6 +29,8 @@ from app.workflow.router import router as workflow_router
 # the nda_fasttrack completion hook.
 import app.workflow.library  # noqa: F401
 import app.modules.contracts.agents  # noqa: F401
+import app.modules.spend.agents  # noqa: F401 — counterparty_screener v2
+import app.modules.matter.agents  # noqa: F401 — trademark_clearance_reviewer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aegis")
