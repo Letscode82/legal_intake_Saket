@@ -14,6 +14,8 @@ import asyncio
 import app.modules.contracts.agents  # noqa: F401 — nda_reviewer + contract_risk_reviewer v2
 import app.modules.matter.agents  # noqa: F401 — trademark_clearance_reviewer
 import app.modules.spend.agents  # noqa: F401 — counterparty_screener v2
+import app.modules.regulatory.agents  # noqa: F401 — notice + marketing
+import app.modules.privacy.agents  # noqa: F401 — DPIA
 from app.workflow.agents import get_workflow_agent
 from app.modules.spend.agents.vendor import counterparty_screener
 from app.workflow.library import (

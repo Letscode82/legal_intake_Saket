@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.modules.admin.router import router as admin_router
 from app.modules.audit.router import router as audit_router
 from app.modules.brain.router import router as brain_router
 from app.modules.cockpit.router import router as cockpit_router
@@ -30,7 +31,9 @@ from app.workflow.router import router as workflow_router
 import app.workflow.library  # noqa: F401
 import app.modules.contracts.agents  # noqa: F401
 import app.modules.spend.agents  # noqa: F401 — counterparty_screener v2
-import app.modules.matter.agents  # noqa: F401 — trademark_clearance_reviewer
+import app.modules.matter.agents  # noqa: F401 — trademark + litigation
+import app.modules.regulatory.agents  # noqa: F401 — notice + marketing
+import app.modules.privacy.agents  # noqa: F401 — DPIA (breach_assessor)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aegis")
@@ -73,6 +76,7 @@ app.include_router(workflow_router, prefix=API_V1)
 app.include_router(brain_router, prefix=API_V1)
 app.include_router(documents_router, prefix=API_V1)
 app.include_router(knowledge_router, prefix=API_V1)
+app.include_router(admin_router, prefix=API_V1)
 
 
 @app.get("/health", tags=["health"], summary="Liveness probe.")
