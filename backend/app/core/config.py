@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(default="claude-sonnet-4-5", alias="ANTHROPIC_MODEL")
 
+    # ── Embeddings (GraphRAG vector leg) ─────────────────────────────
+    # Claude does not embed; Voyage AI is the Anthropic-recommended pairing
+    # (voyage-law-2 is legal-domain-tuned). Unset → retrieval degrades to
+    # Postgres full-text search only, same pattern as the AI degrade.
+    voyage_api_key: str | None = Field(default=None, alias="VOYAGE_API_KEY")
+    voyage_model: str = Field(default="voyage-law-2", alias="VOYAGE_MODEL")
+
     # ── Auth0 ────────────────────────────────────────────────────────
     # The frontend runs the Auth0 login and forwards the access token; the
     # backend validates the JWT (issuer, audience, signature via JWKS).

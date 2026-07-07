@@ -160,6 +160,76 @@ async def seed() -> None:
                 )
             )
 
+        # ── Demo ontology: counterparties + a prior NDA + typed edges ──
+        # Gives "Ask the Brain" something real to answer ("do we have an
+        # NDA with Acme?") before the agents start authoring edges.
+        from app.db.models import Counterparty, Document
+        from app.db.ontology import NodeRef, add_edge
+
+        async def _counterparty(name: str, cp_type: str, country: str) -> Counterparty:
+            row = (
+                await session.execute(
+                    select(Counterparty).where(
+                        Counterparty.organization_id == org.id,
+                        Counterparty.name == name,
+                    )
+                )
+            ).scalars().first()
+            if row is None:
+                row = Counterparty(
+                    organization_id=org.id, name=name, type=cp_type, country=country
+                )
+                session.add(row)
+                await session.flush()
+            return row
+
+        acme = await _counterparty("Acme Corporation", "COMPANY", "US")
+        await _counterparty("Meridian Biotech", "COMPANY", "CH")
+
+        nda_doc = (
+            await session.execute(
+                select(Document).where(
+                    Document.organization_id == org.id,
+                    Document.name == "Mutual NDA — Acme Corporation (executed)",
+                )
+            )
+        ).scalars().first()
+        if nda_doc is None:
+            nda_doc = Document(
+                organization_id=org.id,
+                name="Mutual NDA — Acme Corporation (executed)",
+                mime_type="application/pdf",
+                size_bytes=48_213,
+                storage_url="seed://documents/nda-acme-2025.pdf",
+                owner_type="CONTRACT",
+                owner_id="seed",
+                uploaded_by=admin.id,
+                extracted_text=(
+                    "Mutual Non-Disclosure Agreement between Acme Corporation "
+                    "and AEGIS Demo GC. Term: 2 years from the Effective Date "
+                    "(2025-06-30). Standard carve-outs; mutual no-solicit 12 "
+                    "months; Delaware governing law."
+                ),
+            )
+            session.add(nda_doc)
+            await session.flush()
+
+        await add_edge(
+            session, organization_id=org.id,
+            src=NodeRef("Counterparty", acme.id), label="NDA_WITH",
+            dst=NodeRef("Organization", org.id),
+            properties={"term_years": 2, "effective": "2025-06-30",
+                        "expires": "2027-06-30"},
+            source_module="seed", created_by=admin.id,
+        )
+        await add_edge(
+            session, organization_id=org.id,
+            src=NodeRef("Document", nda_doc.id), label="PARTY_TO",
+            dst=NodeRef("Counterparty", acme.id),
+            properties={"document_type": "NDA"},
+            source_module="seed", created_by=admin.id,
+        )
+
         await session.commit()
         print(f"Seeded org={org.id} admin={admin.email} roles={len(roles_by_name)}")
 
