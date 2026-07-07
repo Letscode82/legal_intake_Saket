@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import pytest
 
+import asyncio
+
+import app.modules.contracts.agents  # noqa: F401 — registers nda_reviewer v2
 from app.workflow.agents import get_workflow_agent
 from app.workflow.library import (
     REQUEST_TYPES,
     WORKFLOW_LIBRARY,
     classify,
     counterparty_screener,
-    nda_reviewer,
 )
 
 
@@ -70,11 +72,7 @@ def test_every_agent_step_resolves_to_a_registered_handler():
 
 
 def test_counterparty_screener_sends_back_on_sanctions_hit():
-    output = counterparty_screener({"sanctions_hit": True}, {})
+    # Deterministic handlers ignore deps — None is fine for a direct call.
+    output = asyncio.run(counterparty_screener({"sanctions_hit": True}, {}, None))
     assert output.proposed_action == "send_back"
     assert output.target_step == 1
-
-
-def test_nda_reviewer_flags_deviations_with_low_confidence():
-    output = nda_reviewer({"deviations": ["non-standard term"]}, {})
-    assert output.confidence == 0.5

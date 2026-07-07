@@ -74,7 +74,13 @@ async def test_nda_lane_end_to_end(client):
     assert decision is not None
     assert decision["agent_id"] == "nda_reviewer"
     assert decision["action_payload"]["action"] == "approve"
-    assert decision["recommendation"]["confidence"] == 0.9
+    # NDA v2 decision tree: counterparty resolved in the ontology (Meridian
+    # is seeded) but no prior NDA on file → template path, cited.
+    assert decision["recommendation"]["confidence"] == 0.85
+    assert any(
+        c["type"] == "Counterparty" and "Meridian" in c["title"]
+        for c in decision["recommendation"]["citations"]
+    )
 
     r = await client.get(f"/api/v1/workflow/instances/{iid}")
     assert r.json()["current_step_order"] == 2  # still parked on the agent step

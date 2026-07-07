@@ -6,25 +6,41 @@ runs the handler and persists its output as a PENDING ``AgentDecision`` —
 the handler itself NEVER moves the ladder; the human approval in the Cockpit
 executes the proposed action (conservative-AI rule #1).
 
-Handler contract (sync, pure over the instance context — deterministic
-defaults; LLM-backed handlers swap in per agent PR and go through
+Handler contract (async; deterministic handlers ignore ``deps``, ontology-
+aware ones read through the SAME GraphRAG/ontology surface as humans — no
+agent has a private data path; LLM-backed handlers go through
 ``core/ai.py``)::
 
     @register_workflow_agent("nda_reviewer")
-    def nda_reviewer(context: dict, step_config: dict) -> WorkflowAgentOutput: ...
+    async def nda_reviewer(
+        context: dict, step_config: dict, deps: WorkflowAgentDeps
+    ) -> WorkflowAgentOutput: ...
 
 ``WorkflowAgentOutput`` fields:
-  proposed_action  "approve" | "send_back" | "reject"
-  target_step      int | None (required for send_back)
-  comment          human-readable findings, shown in the Cockpit + audit
-  confidence       0.0–1.0 (low confidence surfaces prominently; it never
-                   auto-clears anything either way)
+  proposed_action   "approve" | "send_back" | "reject"
+  target_step       int | None (required for send_back)
+  comment           human-readable findings, shown in the Cockpit + audit
+  confidence        0.0–1.0 (low confidence surfaces prominently; it never
+                    auto-clears anything either way)
+  drafted_response  optional draft (memo/reply) the approver may edit
+  citations         [{type, id, title}] — the ontology objects the agent
+                    relied on; clickable in the Cockpit
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, field
+from typing import Awaitable, Callable
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@dataclass
+class WorkflowAgentDeps:
+    """What an agent may read through — the shared surfaces only."""
+
+    session: AsyncSession
+    organization_id: str
 
 
 @dataclass
@@ -33,9 +49,13 @@ class WorkflowAgentOutput:
     comment: str
     confidence: float
     target_step: int | None = None
+    drafted_response: str = ""
+    citations: list[dict] = field(default_factory=list)
 
 
-WorkflowAgentHandler = Callable[[dict, dict], WorkflowAgentOutput]
+WorkflowAgentHandler = Callable[
+    [dict, dict, WorkflowAgentDeps], Awaitable[WorkflowAgentOutput]
+]
 
 _HANDLERS: dict[str, WorkflowAgentHandler] = {}
 

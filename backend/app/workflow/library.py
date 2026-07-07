@@ -34,7 +34,11 @@ agent steps, never for routing.
 
 from __future__ import annotations
 
-from app.workflow.agents import WorkflowAgentOutput, register_workflow_agent
+from app.workflow.agents import (
+    WorkflowAgentDeps,
+    WorkflowAgentOutput,
+    register_workflow_agent,
+)
 
 # ---------------------------------------------------------------------------
 # The library. step fields: step_order, name, screen_key, approver_role,
@@ -223,20 +227,17 @@ def classify(description: str) -> tuple[str, float]:
 # auto-apply semantics.
 # ---------------------------------------------------------------------------
 
-@register_workflow_agent("nda_reviewer")
-def nda_reviewer(context: dict, step_config: dict) -> WorkflowAgentOutput:
-    """Recommend sign-off for standard-template NDAs; flag deviations."""
-    if context.get("uses_standard_template", True) and not context.get("deviations"):
-        return WorkflowAgentOutput(
-            proposed_action="approve", confidence=0.9,
-            comment="Agent: standard NDA template, no deviations detected.")
-    return WorkflowAgentOutput(
-        proposed_action="approve", confidence=0.5,
-        comment="Agent: deviations from standard template detected — routing to counsel.")
+# nda_reviewer is registered by the Contracts module (modules/contracts/
+# agents/nda.py) — the ontology-aware v2 replaced the deterministic stub
+# that shipped here in the initial port.
+
+
 
 
 @register_workflow_agent("contract_risk_reviewer")
-def contract_risk_reviewer(context: dict, step_config: dict) -> WorkflowAgentOutput:
+async def contract_risk_reviewer(
+    context: dict, step_config: dict, deps: WorkflowAgentDeps
+) -> WorkflowAgentOutput:
     """Deterministic risk rules over the contract context."""
     risk = float(context.get("risk_score", 0))
     value = float(context.get("contract_value", 0))
@@ -265,7 +266,9 @@ def contract_risk_reviewer(context: dict, step_config: dict) -> WorkflowAgentOut
 
 
 @register_workflow_agent("notice_analyzer")
-def notice_analyzer(context: dict, step_config: dict) -> WorkflowAgentOutput:
+async def notice_analyzer(
+    context: dict, step_config: dict, deps: WorkflowAgentDeps
+) -> WorkflowAgentOutput:
     """Extract the statutory reply deadline from a logged legal notice."""
     deadline = context.get("reply_deadline_days")
     if deadline:
@@ -278,7 +281,9 @@ def notice_analyzer(context: dict, step_config: dict) -> WorkflowAgentOutput:
 
 
 @register_workflow_agent("litigation_summarizer")
-def litigation_summarizer(context: dict, step_config: dict) -> WorkflowAgentOutput:
+async def litigation_summarizer(
+    context: dict, step_config: dict, deps: WorkflowAgentDeps
+) -> WorkflowAgentOutput:
     """Summarize a litigation matter and surface the Para IV statutory window."""
     para_iv = "para iv" in str(context.get("description", "")).lower()
     return WorkflowAgentOutput(
@@ -289,7 +294,9 @@ def litigation_summarizer(context: dict, step_config: dict) -> WorkflowAgentOutp
 
 
 @register_workflow_agent("counterparty_screener")
-def counterparty_screener(context: dict, step_config: dict) -> WorkflowAgentOutput:
+async def counterparty_screener(
+    context: dict, step_config: dict, deps: WorkflowAgentDeps
+) -> WorkflowAgentOutput:
     """Sanctions / debarment / adverse-media screening over the vendor context."""
     if context.get("sanctions_hit") or context.get("debarred"):
         return WorkflowAgentOutput(
@@ -301,7 +308,9 @@ def counterparty_screener(context: dict, step_config: dict) -> WorkflowAgentOutp
 
 
 @register_workflow_agent("breach_assessor")
-def breach_assessor(context: dict, step_config: dict) -> WorkflowAgentOutput:
+async def breach_assessor(
+    context: dict, step_config: dict, deps: WorkflowAgentDeps
+) -> WorkflowAgentOutput:
     """Assess breach severity against the DPDP notification threshold."""
     records = int(context.get("records_affected", 0))
     if records >= 1000:

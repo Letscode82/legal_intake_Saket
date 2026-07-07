@@ -40,7 +40,8 @@ from app.db.models import (
     WorkflowStep,
     WorkflowTransition,
 )
-from app.workflow.agents import get_workflow_agent
+from app.workflow.agents import WorkflowAgentDeps, get_workflow_agent
+from app.workflow.hooks import completion_hooks_for
 
 MAX_STEPS = 15
 
@@ -189,6 +190,11 @@ async def act(
         from_step=current, to_step=to_step, action=action,
         actor_id=actor_id, actor_label=actor_label, comment=comment,
     )
+    if instance.status == "completed":
+        # Module-owned side effects (e.g. the NDA ladder authoring its
+        # Document + NDA_WITH edge) run inside this same transaction.
+        for hook in completion_hooks_for(instance.definition.key):
+            await hook(session, instance)
     await _maybe_run_agent_step(session, instance)
     return instance
 
@@ -287,7 +293,13 @@ async def _maybe_run_agent_step(
         return
 
     try:
-        out = handler(dict(instance.context or {}), dict(step.agent_config or {}))
+        out = await handler(
+            dict(instance.context or {}),
+            dict(step.agent_config or {}),
+            WorkflowAgentDeps(
+                session=session, organization_id=instance.organization_id
+            ),
+        )
     except Exception as exc:  # noqa: BLE001 — a broken handler never stalls silently
         task.status = "failed"
         task.output = {"error": str(exc)[:500]}
@@ -311,7 +323,7 @@ async def _maybe_run_agent_step(
         recommendation={
             "confidence": out.confidence,
             "suggested_action": out.proposed_action,
-            "drafted_response": "",
+            "drafted_response": out.drafted_response,
             "reasoning": out.comment,
             "concerns": (
                 []
@@ -322,7 +334,7 @@ async def _maybe_run_agent_step(
                     "findings carefully before approving."
                 ]
             ),
-            "citations": [],
+            "citations": out.citations,
             "degraded": False,
             "entity": f"{instance.entity_type}:{instance.entity_id}",
             "step_name": step.name,

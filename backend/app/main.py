@@ -22,8 +22,11 @@ from app.modules.intake.router import router as intake_router
 from app.workflow.router import router as workflow_router
 
 # Importing the library registers the deterministic workflow-agent handlers;
-# importing the engine registers the workflow.apply_agent_step governed action.
+# importing the engine registers the workflow.apply_agent_step governed action;
+# importing contracts.agents registers the ontology-aware NDA v2 handler +
+# the nda_fasttrack completion hook.
 import app.workflow.library  # noqa: F401
+import app.modules.contracts.agents  # noqa: F401
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aegis")
