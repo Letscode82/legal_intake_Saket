@@ -42,21 +42,65 @@ def friendly_ai_error(exc: Exception) -> str:
     return f"AI call failed: {type(exc).__name__}."
 
 
+async def _log_call(
+    *,
+    organization_id: str | None,
+    purpose: str,
+    ok: bool,
+    error: str | None,
+    latency_ms: int,
+    prompt_chars: int,
+    response_chars: int,
+) -> None:
+    """Persist one ai_call_log row. Best-effort telemetry: uses its own short
+    session (the model call is not part of any DB transaction) and never
+    raises — a telemetry failure must not fail the call. Distinct from the
+    audit chain, which records governed state changes."""
+    try:
+        from app.db.models import AICallLog
+        from app.db.session import get_sessionmaker
+
+        sessionmaker = get_sessionmaker()
+        async with sessionmaker() as session:
+            session.add(
+                AICallLog(
+                    organization_id=organization_id,
+                    purpose=purpose,
+                    model=settings.anthropic_model,
+                    ok=ok,
+                    error=(error or "")[:500] or None,
+                    latency_ms=latency_ms,
+                    prompt_chars=prompt_chars,
+                    response_chars=response_chars,
+                )
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001 — telemetry never breaks the caller
+        logger.warning("ai_call_log write failed", exc_info=True)
+
+
 async def call_claude(
     prompt: str,
     *,
     system: str | None = None,
     max_tokens: int = 1024,
     temperature: float = 0.2,
+    purpose: str = "general",
+    organization_id: str | None = None,
 ) -> str:
     """Return Claude's text completion for ``prompt``.
 
-    Raises ``AIUnavailableError`` when no key is configured or the provider
-    call fails, so agents route through their degraded fallback.
+    Every invocation is persisted to ``ai_call_log`` (purpose, latency,
+    outcome) so AI usage is observable and budgetable per org. Raises
+    ``AIUnavailableError`` when no key is configured or the provider call
+    fails, so agents route through their degraded fallback.
     """
     if not settings.anthropic_api_key:
         raise AIUnavailableError("ANTHROPIC_API_KEY is not configured.")
 
+    import time
+
+    started = time.monotonic()
     try:
         # Imported lazily so the process starts without the SDK's network
         # client when AI is unused.
@@ -71,11 +115,30 @@ async def call_claude(
             messages=[{"role": "user", "content": prompt}],
         )
         parts = [b.text for b in message.content if getattr(b, "type", None) == "text"]
-        return "".join(parts).strip()
+        text = "".join(parts).strip()
+        await _log_call(
+            organization_id=organization_id,
+            purpose=purpose,
+            ok=True,
+            error=None,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            prompt_chars=len(prompt),
+            response_chars=len(text),
+        )
+        return text
     except AIUnavailableError:
         raise
     except Exception as exc:  # noqa: BLE001 — normalize every provider error
         logger.warning("call_claude failed: %s", exc)
+        await _log_call(
+            organization_id=organization_id,
+            purpose=purpose,
+            ok=False,
+            error=str(exc),
+            latency_ms=int((time.monotonic() - started) * 1000),
+            prompt_chars=len(prompt),
+            response_chars=0,
+        )
         raise AIUnavailableError(str(exc)) from exc
 
 
@@ -85,10 +148,17 @@ async def call_claude_json(
     system: str | None = None,
     max_tokens: int = 1024,
     temperature: float = 0.2,
+    purpose: str = "general",
+    organization_id: str | None = None,
 ) -> dict:
     """Call Claude and parse a single JSON object from the response."""
     raw = await call_claude(
-        prompt, system=system, max_tokens=max_tokens, temperature=temperature
+        prompt,
+        system=system,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        purpose=purpose,
+        organization_id=organization_id,
     )
     cleaned = _CODE_FENCE.sub("", raw).strip()
     try:

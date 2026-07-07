@@ -24,12 +24,17 @@ app/
     security.py            Auth0 JWT (JWKS) validation → get_current_actor,
                            require_permission; dev-mode seeded-admin fallback
     audit.py               log_audit() + verify_audit_chain()
-    ai.py                  call_claude / call_claude_json — the ONE key site
+    governance.py          AgentDecision gate: PENDING → human approve
+                           executes the governed action + audit, one txn
+    ai.py                  call_claude / call_claude_json — the ONE key site;
+                           every call persisted to ai_call_log
     ids.py                 opaque id generation
   db/
     models.py              Shared entities (Org, Role, User, Person,
                            Counterparty, Document, Obligation, Event, Tag,
-                           Tagging, AuditLog) + intake tables — defined ONCE
+                           Tagging, AuditLog) + ontology_edge, agent_decision,
+                           ai_call_log + intake tables — defined ONCE
+    ontology.py            typed-link authoring (add_edge, get_neighbors)
     session.py             async engine + session dependency
     seed.py                idempotent demo seed (org, 8 roles, admin, users)
     migrations/            Alembic; 0002 installs the audit-chain triggers
@@ -102,6 +107,11 @@ runs against the ASGI app. Coverage:
 - `test_intake_flow.py` — classify → PENDING recommendation → human approval
   gate → audited + chain intact; RBAC (a requester cannot approve).
 - `test_permissions.py` — role-bundle invariants.
+- `test_governance.py` — the AgentDecision gate: PENDING-only agent writes,
+  approve executes action + audit atomically (executor failure leaves
+  PENDING), exactly-once decisions, idempotent ontology edges.
+- `test_defensibility_export.py` — an auditor with no DB access re-verifies
+  the exported chain by SHA-256-ing each row's verbatim canonical content.
 
 ## Frontend integration (next increment)
 

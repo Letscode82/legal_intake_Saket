@@ -24,9 +24,11 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -297,6 +299,145 @@ class AuditLog(Base):
     )
     schema_version: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="1"
+    )
+
+    # Declared here so Alembic autogenerate knows the index exists — it is
+    # CREATED by migration 0002 (after the chain backfill) and must never be
+    # dropped: a duplicate (org, chain_position) means a trigger bypass.
+    __table_args__ = (
+        Index(
+            "uq_audit_log_org_chain_position",
+            "organization_id",
+            "chain_position",
+            unique=True,
+        ),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Ontology + AI governance (PR 2)
+# ══════════════════════════════════════════════════════════════════════
+
+
+class OntologyEdge(Base):
+    """A typed link between two shared-entity nodes — the ontology's edges.
+
+    Nodes are the shared entities themselves (Counterparty, Person, Document,
+    Contract, Obligation, Matter, …) addressed polymorphically by
+    (type, id). Edges are AUTHORED by modules as a byproduct of normal legal
+    work — never extracted by an LLM — so every edge is accurate, cheap, and
+    permissioned at birth. Labels are dot-free UPPER_SNAKE verbs:
+    PARTY_TO, NDA_WITH, OBLIGATES, DUE, CITES, COVERS, SCREENED_ON,
+    SAME_AS, PARENT_OF, …
+    """
+
+    __tablename__ = "ontology_edge"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    src_type: Mapped[str] = mapped_column(String, nullable=False)
+    src_id: Mapped[str] = mapped_column(String, nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    dst_type: Mapped[str] = mapped_column(String, nullable=False)
+    dst_id: Mapped[str] = mapped_column(String, nullable=False)
+    # Edge properties (e.g. NDA_WITH carries term + expiry).
+    properties: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Which module authored the edge (provenance, not authorization).
+    source_module: Mapped[str] = mapped_column(String, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id", "src_type", "src_id", "label", "dst_type", "dst_id",
+            name="uq_ontology_edge_identity",
+        ),
+        Index("ix_ontology_edge_src", "organization_id", "src_type", "src_id"),
+        Index("ix_ontology_edge_dst", "organization_id", "dst_type", "dst_id"),
+        Index("ix_ontology_edge_label", "organization_id", "label"),
+    )
+
+
+class AgentDecision(Base):
+    """The platform-wide conservative-AI contract.
+
+    Every agent recommendation that would mutate state lands here PENDING.
+    The ONLY paths out are the human approve call (APPROVED, or
+    APPROVED_WITH_OVERRIDE when the human edited the payload) — which
+    executes the governed action and writes the audit row in the same
+    transaction — or the human reject call. Downstream mutations gate on an
+    APPROVED status; the gate is schema + transaction, not prompt.
+    """
+
+    __tablename__ = "agent_decision"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    agent_id: Mapped[str] = mapped_column(String, nullable=False)
+    # The resource the recommendation concerns (polymorphic).
+    resource_type: Mapped[str] = mapped_column(String, nullable=False)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False)
+    # Governed action executed on approval — a key in the action registry
+    # (core/governance.py), e.g. "intake.send_response", "matter.spawn".
+    action_key: Mapped[str] = mapped_column(String, nullable=False)
+    action_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # The agent's full recommendation surface for the Cockpit:
+    # {confidence, suggested_action, drafted_response, reasoning,
+    #  concerns[], citations[{type,id,title}], degraded}.
+    recommendation: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # PENDING | APPROVED | APPROVED_WITH_OVERRIDE | REJECTED
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, default="PENDING", index=True
+    )
+    decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    decision_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Audit row written when the approved action executed.
+    executed_audit_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_agent_decision_resource", "organization_id", "resource_type", "resource_id"),
+        Index("ix_agent_decision_org_status", "organization_id", "status"),
+    )
+
+
+class AICallLog(Base):
+    """Telemetry for every model call through core/ai.py.
+
+    Distinct from the audit chain: the chain records governed state changes;
+    this ledger records model usage (cost, latency, failure) per org and
+    purpose so AI operations are observable and budgetable. Best-effort —
+    a telemetry failure never fails the call.
+    """
+
+    __tablename__ = "ai_call_log"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    purpose: Mapped[str] = mapped_column(String, nullable=False, default="general")
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    prompt_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    response_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_ai_call_log_org_created", "organization_id", "created_at"),
     )
 
 
