@@ -19,6 +19,7 @@ from app.modules.audit.router import router as audit_router
 from app.modules.brain.router import router as brain_router
 from app.modules.cockpit.router import router as cockpit_router
 from app.modules.documents.router import router as documents_router
+from app.modules.knowledge.router import router as knowledge_router
 from app.modules.intake.router import router as intake_router
 from app.workflow.router import router as workflow_router
 
@@ -69,6 +70,7 @@ app.include_router(cockpit_router, prefix=API_V1)
 app.include_router(workflow_router, prefix=API_V1)
 app.include_router(brain_router, prefix=API_V1)
 app.include_router(documents_router, prefix=API_V1)
+app.include_router(knowledge_router, prefix=API_V1)
 
 
 @app.get("/health", tags=["health"], summary="Liveness probe.")
