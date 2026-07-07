@@ -16,7 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.modules.audit.router import router as audit_router
+from app.modules.cockpit.router import router as cockpit_router
 from app.modules.intake.router import router as intake_router
+from app.workflow.router import router as workflow_router
+
+# Importing the library registers the deterministic workflow-agent handlers;
+# importing the engine registers the workflow.apply_agent_step governed action.
+import app.workflow.library  # noqa: F401
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aegis")
@@ -54,6 +60,8 @@ app.add_middleware(
 API_V1 = "/api/v1"
 app.include_router(intake_router, prefix=API_V1)
 app.include_router(audit_router, prefix=API_V1)
+app.include_router(cockpit_router, prefix=API_V1)
+app.include_router(workflow_router, prefix=API_V1)
 
 
 @app.get("/health", tags=["health"], summary="Liveness probe.")

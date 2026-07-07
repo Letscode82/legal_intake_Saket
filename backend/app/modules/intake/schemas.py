@@ -62,6 +62,8 @@ class TicketOut(BaseModel):
     sla_hours: int
     sla_status: str
     ai_triage_json: dict | None
+    # The governance ladder driving this ticket (null pre-Front-Door).
+    workflow_instance_id: str | None = None
     triaged_by: str | None
     triaged_at: datetime | None
     triaged_action: str | None

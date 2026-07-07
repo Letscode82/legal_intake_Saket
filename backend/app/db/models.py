@@ -21,6 +21,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -442,6 +443,173 @@ class AICallLog(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Workflow engine (shared package) — governance ladders
+# ══════════════════════════════════════════════════════════════════════
+#
+# Ported from the reference dynamic workflow engine, org-scoped and
+# reconciled with the non-negotiables: every transition twin-records to the
+# hash-chained audit_log, and agent steps emit PENDING AgentDecisions —
+# a human approval is what advances the ladder.
+
+
+class WorkflowDefinition(Base):
+    __tablename__ = "workflow_definition"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", "version",
+                         name="uq_workflow_definition_org_key_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    # Definitions are versioned; in-flight instances pin their definition row
+    # so an admin edit (a new version) never mutates a running ladder.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    steps: Mapped[list["WorkflowStep"]] = relationship(
+        back_populates="definition",
+        order_by="WorkflowStep.step_order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class WorkflowStep(Base):
+    __tablename__ = "workflow_step"
+    __table_args__ = (
+        UniqueConstraint("definition_id", "step_order",
+                         name="uq_workflow_step_definition_order"),
+        CheckConstraint("step_order BETWEEN 1 AND 15",
+                        name="workflow_step_order_range"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    definition_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow_definition.id", ondelete="CASCADE"), index=True
+    )
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    # Links the step to an existing app screen (frontend screenRegistry).
+    screen_key: Mapped[str] = mapped_column(String, nullable=False)
+    approver_role: Mapped[str | None] = mapped_column(String, nullable=True)
+    # human | agent — agent steps run a registered handler whose output
+    # becomes a PENDING AgentDecision (never auto-applied).
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="human")
+    agent_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    sla_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # {"skip_if": {"field": ..., "op": ..., "value": ...}}
+    payload_metadata: Mapped[dict] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+    definition: Mapped[WorkflowDefinition] = relationship(back_populates="steps")
+
+
+class WorkflowInstance(Base):
+    __tablename__ = "workflow_instance"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    definition_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow_definition.id"), index=True
+    )
+    # Polymorphic subject, e.g. ("IntakeTicket", "REQ-3501").
+    entity_type: Mapped[str] = mapped_column(String, nullable=False)
+    entity_id: Mapped[str] = mapped_column(String, nullable=False)
+    current_step_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # in_progress | completed | cancelled
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, default="in_progress", index=True
+    )
+    started_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    context: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Optimistic lock — two approvers acting at once can't both win.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    step_entered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    definition: Mapped[WorkflowDefinition] = relationship(lazy="selectin")
+    transitions: Mapped[list["WorkflowTransition"]] = relationship(
+        back_populates="instance",
+        order_by="WorkflowTransition.created_at",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        Index("ix_workflow_instance_entity",
+              "organization_id", "entity_type", "entity_id"),
+    )
+
+
+class WorkflowTransition(Base):
+    """Product-surface trail of ladder movement. The compliance record is the
+    twin audit_log row written in the same transaction (workflow.instance.*)."""
+
+    __tablename__ = "workflow_transition"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow_instance.id", ondelete="CASCADE"), index=True
+    )
+    from_step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_step_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # start | approve | reject | send_back | cancel
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Display label, e.g. "agent:nda_reviewer (approved by Alex Nguyen)".
+    actor_label: Mapped[str] = mapped_column(String, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    instance: Mapped[WorkflowInstance] = relationship(back_populates="transitions")
+
+
+class WorkflowAgentTask(Base):
+    """One agent-step visit. Terminal states: awaiting_approval (a PENDING
+    AgentDecision carries the proposed action), done (decision decided),
+    failed (handler error — human acts manually)."""
+
+    __tablename__ = "workflow_agent_task"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow_instance.id", ondelete="CASCADE"), index=True
+    )
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    # pending | awaiting_approval | done | failed
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    input: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    output: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    decision_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Legal Intake module tables
 # ══════════════════════════════════════════════════════════════════════
 
@@ -489,6 +657,17 @@ class IntakeTicket(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Inbound-channel dedup: the source message's stable id (email
+    # internetMessageId, webhook messageId). A retry/replay of the same
+    # message resolves to the existing ticket instead of duplicating.
+    # NULLs are distinct in Postgres, so FORM/COPILOT tickets are unaffected.
+    external_message_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # The governance ladder driving this ticket (Front Door routing).
+    workflow_instance_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_instance.id", ondelete="SET NULL"), nullable=True
+    )
+
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -501,6 +680,11 @@ class IntakeTicket(Base):
 
     recommendations: Mapped[list["AgentRecommendation"]] = relationship(
         back_populates="ticket", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "external_message_id",
+                         name="uq_intake_ticket_org_external_message"),
     )
 
 
