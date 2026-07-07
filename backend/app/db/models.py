@@ -32,6 +32,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import ARRAY
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -318,6 +319,44 @@ class AuditLog(Base):
 # ══════════════════════════════════════════════════════════════════════
 # Ontology + AI governance (PR 2)
 # ══════════════════════════════════════════════════════════════════════
+
+
+class OntologyEmbedding(Base):
+    """Vector embedding of a shared-entity node — the GraphRAG vector leg.
+
+    Stored as a portable ``float8[]`` (Postgres array) so the schema applies
+    everywhere, including sandboxes without the ``vector`` extension.
+    Cosine reranking runs in Python over the graph-narrowed candidate set
+    (already small), so no ANN index is required for correctness. Where
+    pgvector IS available (Neon), the optional follow-up migration adds a
+    ``vector`` column + HNSW index for fast GLOBAL search — this row stays
+    the source of truth either way.
+
+    One row per (org, node); ``content_hash`` lets the indexer skip
+    re-embedding unchanged nodes. ``model`` records which model produced the
+    vector so a model swap can be detected and reindexed.
+    """
+
+    __tablename__ = "ontology_embedding"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    node_type: Mapped[str] = mapped_column(String, nullable=False)
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    dim: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[list] = mapped_column(ARRAY(Float), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "node_type", "node_id",
+                         name="uq_ontology_embedding_node"),
+    )
 
 
 class OntologyEdge(Base):

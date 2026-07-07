@@ -41,11 +41,35 @@ class Settings(BaseSettings):
     anthropic_model: str = Field(default="claude-sonnet-4-5", alias="ANTHROPIC_MODEL")
 
     # ── Embeddings (GraphRAG vector leg) ─────────────────────────────
-    # Claude does not embed; Voyage AI is the Anthropic-recommended pairing
-    # (voyage-law-2 is legal-domain-tuned). Unset → retrieval degrades to
-    # Postgres full-text search only, same pattern as the AI degrade.
+    # Claude does not embed. Default is a SELF-HOSTED model (BAAI/BGE-M3)
+    # served over HTTP — privileged legal content never leaves our
+    # region/infra (Voyage stays available as a hosted alternative). Unset
+    # provider / unreachable endpoint → retrieval degrades to Postgres
+    # full-text search only, the same discipline as the AI-client degrade.
+    #
+    #   EMBEDDINGS_PROVIDER = "bge-m3" | "voyage" | "none"
+    #   EMBEDDINGS_URL      = self-hosted endpoint (HF Text-Embeddings-
+    #                         Inference / OpenAI-compatible). For BGE-M3:
+    #                         docker run ghcr.io/huggingface/text-embeddings-
+    #                         inference --model-id BAAI/bge-m3
+    embeddings_provider: str = Field(default="bge-m3", alias="EMBEDDINGS_PROVIDER")
+    embeddings_url: str | None = Field(default=None, alias="EMBEDDINGS_URL")
+    embeddings_api_key: str | None = Field(default=None, alias="EMBEDDINGS_API_KEY")
+    embeddings_model: str = Field(default="BAAI/bge-m3", alias="EMBEDDINGS_MODEL")
+    embeddings_dim: int = Field(default=1024, alias="EMBEDDINGS_DIM")
+
+    # Hosted fallback provider (optional).
     voyage_api_key: str | None = Field(default=None, alias="VOYAGE_API_KEY")
     voyage_model: str = Field(default="voyage-law-2", alias="VOYAGE_MODEL")
+
+    @property
+    def embeddings_configured(self) -> bool:
+        p = self.embeddings_provider.lower()
+        if p in {"bge-m3", "http"}:
+            return bool(self.embeddings_url)
+        if p == "voyage":
+            return bool(self.voyage_api_key)
+        return False
 
     # ── Auth0 ────────────────────────────────────────────────────────
     # The frontend runs the Auth0 login and forwards the access token; the

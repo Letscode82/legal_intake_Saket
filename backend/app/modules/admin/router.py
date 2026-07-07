@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.permissions import Permission
 from app.core.security import Actor, require_permission
 from app.db.session import get_session
+from app.db.embeddings_index import reindex_org
 from app.workflow.jobs import evaluate_sla_breaches
 
 router = APIRouter(prefix="/admin/jobs", tags=["admin"])
@@ -43,4 +44,32 @@ async def sla_sweep(
         instances_scanned=result.instances_scanned,
         breaches_recorded=result.breaches_recorded,
         breached_instance_ids=result.breached_instance_ids,
+    )
+
+
+class ReindexOut(BaseModel):
+    organization_id: str
+    provider: str
+    embedded: int
+    skipped: int
+    scanned: int
+
+
+@router.post(
+    "/reindex-embeddings",
+    response_model=ReindexOut,
+    summary="Rebuild ontology embeddings for GraphRAG's vector leg "
+    "(idempotent via content hash; no-op when no provider is configured).",
+)
+async def reindex_embeddings(
+    session: AsyncSession = Depends(get_session),
+    actor: Actor = Depends(require_permission(Permission.AUDIT_READ_ALL)),
+) -> ReindexOut:
+    result = await reindex_org(session, actor.organization_id)
+    return ReindexOut(
+        organization_id=result.organization_id,
+        provider=result.provider,
+        embedded=result.embedded,
+        skipped=result.skipped,
+        scanned=result.scanned,
     )

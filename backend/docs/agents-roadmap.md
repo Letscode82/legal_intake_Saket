@@ -13,7 +13,7 @@
 |---|---|---|
 | Agent count | **6 committed now** (NDA, Contract Review, Vendor/Sanctions, Policy Q&A, FAQ, Trademark); the doc's other 5 (Notice, Privacy DPIA, Marketing Review, Litigation Support, Contract-Type Specialist) staged as opt-in **Phase B2** | Core brief: "~6 agents… never agent-ify a mechanical step" |
 | Graph engine | **Recursive CTEs + pgvector in plain Postgres** (no Apache AGE) | "Simplest solution", Neon-native, honors "no raw SQL outside db/" |
-| Embeddings | **Provider abstraction (Voyage AI)** behind one interface; **degrades to Postgres full-text search** when no key | Claude does not embed; degrade pattern mirrors the AI-client degrade |
+| Embeddings | **Self-hosted BAAI/BGE-M3** (Apache-2.0, 8192 ctx) over an HTTP seam; Voyage as hosted alt; **degrades to Postgres full-text search** when unconfigured | Claude does not embed; self-hosting keeps privileged content in-region (see `docs/embeddings.md`). Jina v3 rejected — CC-BY-NC (non-commercial) |
 | Agents ↔ modules | Agents map INTO the 11 locked modules (Trademark → Matter; Notice/Marketing → Regulatory; FAQ → Knowledge; Policy → Governance; DPIA → Privacy Ops; Vendor → Spend; contracts agents → Contracts; Cockpit/Ask-the-Brain → Command Center) | Module list is LOCKED — agents never imply a 12th module |
 | Workflow engine | Ported as the shared `workflow` package (not a module); the intake Front Door routes through it; agent steps host the specialists | Fills the `@aegis/workflow` stub; one router for everything reaching Legal |
 

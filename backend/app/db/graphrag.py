@@ -68,7 +68,8 @@ class GraphRAGResult:
     hits: list[GraphHit]
     gap_notes: list[str]
     subgraph_node_count: int
-    retrieval_mode: str  # "graph+fts" | "fts-only"
+    # "graph+fts+vector" | "graph+fts" | "fts+vector" | "fts-only"
+    retrieval_mode: str
 
 
 def _tokens(query: str) -> list[str]:
@@ -95,7 +96,11 @@ async def retrieve(
     *,
     k_hops: int = 2,
     limit: int = 12,
+    embedder=None,
 ) -> GraphRAGResult:
+    from app.core.embeddings import get_embedding_provider
+
+    embedder = embedder if embedder is not None else get_embedding_provider()
     tokens = _tokens(query)
     gap_notes: list[str] = []
     allowed = _allowed_types(actor)
@@ -118,6 +123,12 @@ async def retrieve(
 
     tsq = _or_tsquery(tokens)
 
+    # ── 0. Query embedding (once) — the vector leg. Degrades to None. ─
+    query_vec: list[float] | None = None
+    if getattr(embedder, "name", "none") != "none":
+        vecs = await embedder.embed([query])
+        query_vec = vecs[0] if vecs else None
+
     # ── 1. Anchor resolution: FTS over named entities ────────────────
     anchors = await _find_anchors(session, actor.organization_id, tsq, allowed)
 
@@ -138,17 +149,24 @@ async def retrieve(
             "back to full-text search without graph context."
         )
 
-    # ── 3. Hydrate + rank candidates ─────────────────────────────────
+    # ── 3. Hydrate + rank candidates (FTS + hop, then vector rerank) ──
     hits: list[GraphHit] = []
+    vector_applied = False
     if reached:
         hits = await _hydrate_and_rank(
             session, actor.organization_id, reached, tsq
         )
-        mode = "graph+fts"
+        vector_applied = await _vector_rerank(
+            session, actor.organization_id, hits, query_vec
+        )
+        mode = "graph+fts+vector" if vector_applied else "graph+fts"
     else:
         # Global FTS fallback (still permission-filtered).
         hits = await _global_fts(session, actor.organization_id, tsq, allowed)
-        mode = "fts-only"
+        vector_applied = await _vector_rerank(
+            session, actor.organization_id, hits, query_vec
+        )
+        mode = "fts+vector" if vector_applied else "fts-only"
         if anchors and not hits:
             gap_notes.append(
                 "Anchors resolved but their neighborhood contained nothing "
@@ -315,6 +333,41 @@ _HYDRATION_SQL: dict[str, str] = {
         WHERE organization_id = :org AND id = ANY(:ids)
     """,
 }
+
+
+_VECTOR_WEIGHT = 3.0
+
+
+async def _vector_rerank(
+    session: AsyncSession,
+    org_id: str,
+    hits: list["GraphHit"],
+    query_vec: list[float] | None,
+) -> bool:
+    """Fuse semantic similarity into hit scores over the (small) candidate
+    set. Portable: cosine is computed in Python from stored ``float8[]``
+    vectors — no pgvector needed for correctness (it's a scale optimization
+    for global search, added by the optional pgvector migration). Returns
+    True if any vector actually contributed."""
+    if not query_vec or not hits:
+        return False
+    from app.core.embeddings import cosine
+    from app.db.embeddings_index import load_embeddings
+
+    stored = await load_embeddings(
+        session, org_id, [(h.type, h.id) for h in hits]
+    )
+    if not stored:
+        return False
+    for h in hits:
+        vec = stored.get((h.type, h.id))
+        if vec is None:
+            continue
+        sim = cosine(query_vec, vec)
+        if sim > 0:
+            h.score = round(h.score + _VECTOR_WEIGHT * sim, 4)
+    hits.sort(key=lambda x: x.score, reverse=True)
+    return True
 
 
 async def _hydrate_and_rank(
