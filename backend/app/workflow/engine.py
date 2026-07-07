@@ -181,9 +181,17 @@ async def act(
     else:
         raise WorkflowValidationError(f"Unknown action '{action}'.")
 
-    if to_step is not None:
+    if to_step is not None and to_step != current:
         instance.current_step_order = to_step
         instance.step_entered_at = _now()
+        # A fresh step visit resets the SLA-sweep idempotency marker so the
+        # new step can breach (and be recorded) on its own clock.
+        if (instance.context or {}).get("_sla_breached_step") is not None:
+            ctx = dict(instance.context)
+            ctx.pop("_sla_breached_step", None)
+            instance.context = ctx
+    elif to_step is not None:
+        instance.current_step_order = to_step
     instance.version += 1
     await _record(
         session, instance,

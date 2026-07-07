@@ -533,6 +533,97 @@ class Mark(Base):
     )
 
 
+class Assessment(Base):
+    """Privacy / DPIA assessment record (Data-Privacy agent, PR 16).
+
+    Authored on approval of the data_breach / privacy ladder. The
+    processing map (System -> DataCategory) is authored as ontology edges;
+    this row holds the rating + lawful-basis + conditions summary."""
+
+    __tablename__ = "assessment"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    subject: Mapped[str] = mapped_column(String, nullable=False)  # system/vendor/initiative
+    # LOW | MEDIUM | HIGH
+    risk_rating: Mapped[str] = mapped_column(String, nullable=False, default="MEDIUM")
+    lawful_basis: Mapped[str | None] = mapped_column(String, nullable=True)
+    data_categories: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    cross_border: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    conditions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    gaps: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    source_workflow_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ClaimEntry(Base):
+    """Approved marketing-claim library entry (Marketing agent, PR 17).
+
+    A claim cleared for a product/market with substantiation + expiry.
+    Review compares submitted copy against these; verbatim reuse is
+    fast-track-eligible, any deviation is a new (pending) claim."""
+
+    __tablename__ = "claim_entry"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    product: Mapped[str] = mapped_column(String, nullable=False)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="US")
+    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
+    substantiation_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    # True = regulated product/therapeutic claim → mandatory human review.
+    regulated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # APPROVED | PENDING | EXPIRED
+    status: Mapped[str] = mapped_column(String, nullable=False, default="APPROVED")
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_claim_entry_product", "organization_id", "product", "market"),
+    )
+
+
+class ContractPlaybook(Base):
+    """Per-type contract playbook (Contract-Type Specialist, PR 19).
+
+    Counsel-owned, versioned. The router selects the playbook from the
+    ticket's contract type; the specialist agent benchmarks against its
+    mandatory / forbidden / negotiable bands. One configurable agent, many
+    playbooks — no codebase per type."""
+
+    __tablename__ = "contract_playbook"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    contract_type: Mapped[str] = mapped_column(String, nullable=False)  # vendor|services|...
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    mandatory_clauses: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    forbidden_clauses: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    negotiable_bands: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    owner_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "contract_type", "version",
+                         name="uq_contract_playbook_type_version"),
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Workflow engine (shared package) — governance ladders
 # ══════════════════════════════════════════════════════════════════════

@@ -312,6 +312,70 @@ async def seed() -> None:
             if existing_row is None:
                 session.add(Mark(organization_id=org.id, **mark))
 
+        # ── Phase B2 reference data (claims + playbooks) ───────────────
+        from app.db.models import ClaimEntry, ContractPlaybook
+
+        claim_rows = [
+            {"product": "NovaPulse", "market": "US",
+             "claim_text": "Clinically shown to reduce recovery time.",
+             "substantiation_ref": "STUDY-2025-014", "regulated": True,
+             "status": "APPROVED"},
+            {"product": "NovaPulse", "market": "US",
+             "claim_text": "Trusted by leading clinicians.",
+             "substantiation_ref": "SURVEY-2025-03", "regulated": False,
+             "status": "APPROVED"},
+            {"product": "Aegira", "market": "US",
+             "claim_text": "Enterprise-grade security you can rely on.",
+             "substantiation_ref": None, "regulated": False, "status": "APPROVED"},
+        ]
+        for claim in claim_rows:
+            existing_row = (
+                await session.execute(
+                    select(ClaimEntry).where(
+                        ClaimEntry.organization_id == org.id,
+                        ClaimEntry.product == claim["product"],
+                        ClaimEntry.claim_text == claim["claim_text"],
+                    )
+                )
+            ).scalars().first()
+            if existing_row is None:
+                session.add(ClaimEntry(organization_id=org.id, **claim))
+
+        playbook_rows = [
+            {"contract_type": "vendor",
+             "mandatory_clauses": ["liability_cap", "termination_for_convenience",
+                                   "data_protection"],
+             "forbidden_clauses": ["unlimited_indemnity", "auto_renewal_over_12mo"],
+             "negotiable_bands": {"payment_terms_days": [30, 60],
+                                  "liability_cap_multiple": [1, 2]}},
+            {"contract_type": "services",
+             "mandatory_clauses": ["scope_of_work", "liability_cap", "ip_ownership"],
+             "forbidden_clauses": ["unlimited_liability"],
+             "negotiable_bands": {"payment_terms_days": [15, 45]}},
+            {"contract_type": "clinical",
+             "mandatory_clauses": ["gcp_compliance", "indemnification",
+                                   "subject_injury", "data_privacy"],
+             "forbidden_clauses": ["publication_restriction_over_24mo"],
+             "negotiable_bands": {}},
+        ]
+        for pb in playbook_rows:
+            existing_row = (
+                await session.execute(
+                    select(ContractPlaybook).where(
+                        ContractPlaybook.organization_id == org.id,
+                        ContractPlaybook.contract_type == pb["contract_type"],
+                        ContractPlaybook.version == 1,
+                    )
+                )
+            ).scalars().first()
+            if existing_row is None:
+                session.add(
+                    ContractPlaybook(
+                        organization_id=org.id, version=1, is_active=True,
+                        owner_user_id=admin.id, **pb,
+                    )
+                )
+
         await session.commit()
         print(f"Seeded org={org.id} admin={admin.email} roles={len(roles_by_name)}")
 

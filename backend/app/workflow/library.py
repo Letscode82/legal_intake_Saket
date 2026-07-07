@@ -179,6 +179,27 @@ WORKFLOW_LIBRARY: list[dict] = [
             _h(4, "Clearance Decision", "gc_approval", "ip_counsel", sla=72),
         ],
     },
+    {
+        "key": "marketing_review", "name": "Marketing Material Review",
+        "description": "Promotional content vs the approved-claims library. Regulated product/therapeutic claims and any new claim ALWAYS require human (and where configured, medical/regulatory-affairs) review — the agent never clears a product claim on its own.",
+        "steps": [
+            _h(1, "Submit Material", "marketing_intake", "marketing"),
+            _a(2, "AI Claim Review", "agent_review", "regulatory_counsel", "marketing_reviewer", 0.9, sla=24),
+            _h(3, "Legal / Reg-Affairs Review", "legal_review", "regulatory_counsel", sla=72),
+            _h(4, "Approval to Publish", "gc_approval", "general_counsel", sla=48),
+        ],
+    },
+    {
+        "key": "contract_type_specialist", "name": "Contract (Type-Specialist)",
+        "description": "Commercial contracts reviewed against a per-type playbook (vendor / services / licensing / clinical / ...). The router selects the playbook from the contract type; unmatched types fall through to the generalist Contract Approval ladder.",
+        "steps": [
+            _h(1, "Draft & Submit", "contract_draft", "contract_owner"),
+            _a(2, "AI Type-Specific Review", "agent_review", "legal_team", "contract_type_specialist", 0.85, sla=8),
+            _h(3, "Legal Review", "legal_review", "legal_team", sla=48),
+            _h(4, "GC Approval", "gc_approval", "general_counsel", sla=72),
+            _h(5, "Counter-signature", "signature_screen", "signatory", sla=72),
+        ],
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -198,6 +219,7 @@ REQUEST_TYPES: dict[str, dict] = {
     "employment":     {"definition_key": "employment_matter",      "label": "Employment / POSH"},
     "secretarial":    {"definition_key": "board_approval",         "label": "Board / Secretarial"},
     "trademark":      {"definition_key": "trademark_clearance",   "label": "Trademark Clearance"},
+    "marketing":      {"definition_key": "marketing_review",      "label": "Marketing Review"},
 }
 
 _TRIAGE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
@@ -210,6 +232,7 @@ _TRIAGE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("investigation", ("whistleblower", "bribery", "ucpmp", "kickback", "misconduct", "fraud")),
     ("employment",    ("posh", "harassment", "termination", "disciplinary", "employee")),
     ("vendor",        ("vendor", "supplier", "counterparty", "onboarding", "due diligence", "distributor")),
+    ("marketing",     ("marketing", "advertis", "promotional", "campaign", "brochure", "landing page")),
     ("trademark",     ("trademark", "brand name", "logo clearance", "word mark", "nice class")),
     ("nda",           ("nda", "non-disclosure", "confidentiality agreement", "cda")),
     ("secretarial",   ("power of attorney", "poa", "board resolution", "authorised signatory", "disclosure")),
@@ -252,32 +275,13 @@ def classify(description: str) -> tuple[str, float]:
 
 
 
-@register_workflow_agent("notice_analyzer")
-async def notice_analyzer(
-    context: dict, step_config: dict, deps: WorkflowAgentDeps
-) -> WorkflowAgentOutput:
-    """Extract the statutory reply deadline from a logged legal notice."""
-    deadline = context.get("reply_deadline_days")
-    if deadline:
-        return WorkflowAgentOutput(
-            proposed_action="approve", confidence=0.85,
-            comment=f"Agent: statutory reply deadline extracted — {deadline} days.")
-    return WorkflowAgentOutput(
-        proposed_action="approve", confidence=0.55,
-        comment="Agent: could not extract a reply deadline from the notice — please verify.")
+# notice_analyzer is registered by the Regulatory module
+# (modules/regulatory/agents/notice.py) — deadline-extracting v2.
 
 
-@register_workflow_agent("litigation_summarizer")
-async def litigation_summarizer(
-    context: dict, step_config: dict, deps: WorkflowAgentDeps
-) -> WorkflowAgentOutput:
-    """Summarize a litigation matter and surface the Para IV statutory window."""
-    para_iv = "para iv" in str(context.get("description", "")).lower()
-    return WorkflowAgentOutput(
-        proposed_action="approve", confidence=0.82,
-        comment=("Agent: Para IV notice detected — 45-day statutory window to file suit applies. "
-                 if para_iv else "Agent: case summary prepared. ")
-                + "Key dates docketed for counsel review.")
+# litigation_summarizer is registered by the Matter module
+# (modules/matter/agents/litigation.py) — the GraphRAG-cited case-brief v2
+# replaced the deterministic stub that shipped here in the initial port.
 
 
 # counterparty_screener is registered by the Spend & Counsel module
@@ -286,16 +290,5 @@ async def litigation_summarizer(
 
 
 
-@register_workflow_agent("breach_assessor")
-async def breach_assessor(
-    context: dict, step_config: dict, deps: WorkflowAgentDeps
-) -> WorkflowAgentOutput:
-    """Assess breach severity against the DPDP notification threshold."""
-    records = int(context.get("records_affected", 0))
-    if records >= 1000:
-        return WorkflowAgentOutput(
-            proposed_action="approve", confidence=0.9,
-            comment=f"Agent: {records:,} records affected — notification threshold met; 72-hour clock running.")
-    return WorkflowAgentOutput(
-        proposed_action="approve", confidence=0.6,
-        comment=f"Agent: {records:,} records affected — below clear threshold; counsel should confirm notifiability.")
+# breach_assessor is registered by the Privacy Ops module
+# (modules/privacy/agents/dpia.py) — the DPIA-scoring v2.
