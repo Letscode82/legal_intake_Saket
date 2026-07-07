@@ -1,0 +1,28 @@
+# Render.com blueprint (alternative to fly.toml) for the AEGIS backend.
+# Postgres is provisioned separately (Neon in prod). Set the secret env
+# vars in the Render dashboard; migrations run in preDeployCommand.
+services:
+  - type: web
+    name: aegis-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    preDeployCommand: alembic upgrade head
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PORT
+        value: "8000"
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AUTH0_DOMAIN
+        sync: false
+      - key: AUTH0_AUDIENCE
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false

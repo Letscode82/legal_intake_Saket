@@ -1,0 +1,43 @@
+# Run the split locally: Postgres + FastAPI backend together.
+# The Next.js frontend runs separately (`pnpm --filter @aegis/web dev`,
+# port 5173) and points at the backend via NEXT_PUBLIC_BACKEND_URL /
+# BACKEND_URL. Bring this up with:
+#   docker compose -f docker-compose.split.yml up --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: aegis
+      POSTGRES_DB: aegis
+    ports:
+      - "5432:5432"
+    volumes:
+      - aegis-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+asyncpg://aegis:aegis@db:5432/aegis
+      FRONTEND_ORIGINS: http://localhost:5173,http://localhost:3000
+      # ANTHROPIC_API_KEY / AUTH0_* optional in dev (agents degrade,
+      # every request resolves to the seeded admin).
+    ports:
+      - "8000:8000"
+    # The image CMD runs `alembic upgrade head` then serves; seed once with:
+    #   docker compose -f docker-compose.split.yml exec backend python -m app.db.seed
+
+volumes:
+  aegis-db-data:
+    name: aegis-db-data
