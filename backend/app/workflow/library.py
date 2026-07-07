@@ -169,6 +169,16 @@ WORKFLOW_LIBRARY: list[dict] = [
             _h(3, "CS / Board Approval", "board_signoff", "company_secretary", sla=168),
         ],
     },
+    {
+        "key": "trademark_clearance", "name": "Trademark Clearance",
+        "description": "AI preliminary clearance on proposed marks — distinctiveness, classes, portfolio conflicts. ALWAYS routes to the IP lead plus a formal registry search; the memo is a first pass, never a clearance.",
+        "steps": [
+            _h(1, "Mark Details", "trademark_intake", "requester"),
+            _a(2, "AI Preliminary Clearance", "agent_review", "ip_counsel", "trademark_clearance_reviewer", 0.99, sla=24),
+            _h(3, "IP Lead Review & Formal Search Order", "ip_assessment", "ip_counsel", sla=72),
+            _h(4, "Clearance Decision", "gc_approval", "ip_counsel", sla=72),
+        ],
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -187,6 +197,7 @@ REQUEST_TYPES: dict[str, dict] = {
     "data_breach":    {"definition_key": "data_breach",            "label": "Data Privacy Incident"},
     "employment":     {"definition_key": "employment_matter",      "label": "Employment / POSH"},
     "secretarial":    {"definition_key": "board_approval",         "label": "Board / Secretarial"},
+    "trademark":      {"definition_key": "trademark_clearance",   "label": "Trademark Clearance"},
 }
 
 _TRIAGE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
@@ -199,6 +210,7 @@ _TRIAGE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("investigation", ("whistleblower", "bribery", "ucpmp", "kickback", "misconduct", "fraud")),
     ("employment",    ("posh", "harassment", "termination", "disciplinary", "employee")),
     ("vendor",        ("vendor", "supplier", "counterparty", "onboarding", "due diligence", "distributor")),
+    ("trademark",     ("trademark", "brand name", "logo clearance", "word mark", "nice class")),
     ("nda",           ("nda", "non-disclosure", "confidentiality agreement", "cda")),
     ("secretarial",   ("power of attorney", "poa", "board resolution", "authorised signatory", "disclosure")),
     ("contract",      ("contract", "agreement", "msa", "sow", "amendment", "renewal", "license")),
@@ -234,35 +246,10 @@ def classify(description: str) -> tuple[str, float]:
 
 
 
-@register_workflow_agent("contract_risk_reviewer")
-async def contract_risk_reviewer(
-    context: dict, step_config: dict, deps: WorkflowAgentDeps
-) -> WorkflowAgentOutput:
-    """Deterministic risk rules over the contract context."""
-    risk = float(context.get("risk_score", 0))
-    value = float(context.get("contract_value", 0))
-    missing = [c for c in ("liability_cap", "termination_clause")
-               if not context.get(f"has_{c}", True)]
+# contract_risk_reviewer is registered by the Contracts module
+# (modules/contracts/agents/review.py) — ontology-aware v2.
 
-    if missing:
-        return WorkflowAgentOutput(
-            proposed_action="send_back", target_step=1, confidence=0.95,
-            comment="Agent: contract is missing "
-                    + " and ".join(m.replace("_", " ") for m in missing)
-                    + " — returned to drafting.")
-    if risk >= 8:
-        return WorkflowAgentOutput(
-            proposed_action="send_back", target_step=1, confidence=0.9,
-            comment=f"Agent: risk score {risk}/10 exceeds threshold — returned to drafting.")
-    if risk >= 5 or value >= 1_000_000:
-        # Uncertain zone -> low confidence surfaces prominently to the approver.
-        return WorkflowAgentOutput(
-            proposed_action="approve", confidence=0.55,
-            comment=f"Agent: elevated risk ({risk}/10, value {value:,.0f}) — recommending "
-                    "approval but confidence is low; please review findings.")
-    return WorkflowAgentOutput(
-        proposed_action="approve", confidence=0.93,
-        comment=f"Agent: risk score {risk}/10, standard clauses present. No issues found.")
+
 
 
 @register_workflow_agent("notice_analyzer")
@@ -293,18 +280,10 @@ async def litigation_summarizer(
                 + "Key dates docketed for counsel review.")
 
 
-@register_workflow_agent("counterparty_screener")
-async def counterparty_screener(
-    context: dict, step_config: dict, deps: WorkflowAgentDeps
-) -> WorkflowAgentOutput:
-    """Sanctions / debarment / adverse-media screening over the vendor context."""
-    if context.get("sanctions_hit") or context.get("debarred"):
-        return WorkflowAgentOutput(
-            proposed_action="send_back", target_step=1, confidence=0.95,
-            comment="Agent: screening HIT (sanctions/debarment list) — onboarding returned; obtain clarification.")
-    return WorkflowAgentOutput(
-        proposed_action="approve", confidence=0.9,
-        comment="Agent: sanctions, debarment and adverse-media screening clear.")
+# counterparty_screener is registered by the Spend & Counsel module
+# (modules/spend/agents/vendor.py) — sanctions-list-backed v2.
+
+
 
 
 @register_workflow_agent("breach_assessor")

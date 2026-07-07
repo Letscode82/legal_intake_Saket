@@ -319,6 +319,7 @@ async def _maybe_run_agent_step(
             "target_step": out.target_step,
             "comment": out.comment,
             "expected_step": step.step_order,
+            "ontology_writes": out.ontology_writes,
         },
         recommendation={
             "confidence": out.confidence,
@@ -377,6 +378,22 @@ async def _apply_agent_step(session, actor, decision) -> dict:
         comment=payload.get("comment"),
         target_step=payload.get("target_step"),
     )
+    # Approval-gated ontology writes the agent proposed (e.g. the screening
+    # result edge). The human approval IS the authorization; they land in
+    # this same transaction and ride this approval's audit row.
+    from app.db.ontology import NodeRef, add_edge
+
+    for spec in payload.get("ontology_writes") or []:
+        await add_edge(
+            session,
+            organization_id=instance.organization_id,
+            src=NodeRef(spec["src_type"], spec["src_id"]),
+            label=spec["label"],
+            dst=NodeRef(spec["dst_type"], spec["dst_id"]),
+            properties=spec.get("properties") or {},
+            source_module=f"agent:{decision.agent_id}",
+            created_by=actor.user_id,
+        )
     # Close out the agent task this decision came from.
     task = (
         await session.execute(

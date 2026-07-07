@@ -230,6 +230,88 @@ async def seed() -> None:
             source_module="seed", created_by=admin.id,
         )
 
+        # ── Agent-fleet reference data (PRs 10–14) ─────────────────────
+        from app.db.models import KnowledgeEntry, Mark, SanctionsEntry
+
+        for entry in [
+            {"name": "Blackhat Global Trading FZE",
+             "aliases": ["Blackhat Trading", "BGT FZE"],
+             "country": "AE", "program": "DEMO-SDN"},
+            {"name": "Volkov Industries LLC",
+             "aliases": ["Volkov Industrial Group"],
+             "country": "RU", "program": "DEMO-SDN"},
+            {"name": "Northstar Shipping Co",
+             "aliases": [], "country": "IR", "program": "DEMO-SDN"},
+        ]:
+            existing_row = (
+                await session.execute(
+                    select(SanctionsEntry).where(
+                        SanctionsEntry.list_source == "OFAC_SDN_DEMO",
+                        SanctionsEntry.name == entry["name"],
+                    )
+                )
+            ).scalars().first()
+            if existing_row is None:
+                session.add(SanctionsEntry(list_source="OFAC_SDN_DEMO", **entry))
+
+        kb_rows = [
+            {"kind": "FAQ", "slug": "nda-turnaround", "topic": "nda",
+             "title": "How long does an NDA take?",
+             "body": "Standard mutual NDAs on our template (MNDA-v4.2) are "
+                     "typically turned around within 1 business day via the "
+                     "Legal Front Door. Non-standard terms route to counsel "
+                     "and take 3-5 days."},
+            {"kind": "FAQ", "slug": "contract-signature-authority", "topic": "signature",
+             "title": "Who can sign contracts?",
+             "body": "Only officers listed in the signature authority matrix "
+                     "may execute contracts. Contracts above $250k require "
+                     "GC counter-signature."},
+            {"kind": "POLICY", "slug": "gifts-entertainment", "topic": "gifts",
+             "title": "Gifts & Entertainment Policy",
+             "body": "Employees may not accept gifts exceeding $150 in value "
+                     "from any vendor or counterparty. All gifts from "
+                     "government officials must be declined and reported to "
+                     "Compliance within 48 hours. (v2, effective 2026-01-01)"},
+            {"kind": "POLICY", "slug": "outside-counsel-engagement", "topic": "counsel",
+             "title": "Outside Counsel Engagement Policy",
+             "body": "Engaging outside counsel requires Legal Ops approval "
+                     "and an executed engagement letter with agreed rates. "
+                     "Matters above $100k estimated fees require GC approval."},
+        ]
+        for kb in kb_rows:
+            existing_row = (
+                await session.execute(
+                    select(KnowledgeEntry).where(
+                        KnowledgeEntry.organization_id == org.id,
+                        KnowledgeEntry.kind == kb["kind"],
+                        KnowledgeEntry.slug == kb["slug"],
+                    )
+                )
+            ).scalars().first()
+            if existing_row is None:
+                session.add(
+                    KnowledgeEntry(
+                        organization_id=org.id, version=1, is_current=True,
+                        owner_user_id=admin.id, **kb,
+                    )
+                )
+
+        for mark in [
+            {"name": "AEGIRA", "nice_classes": [9, 42],
+             "jurisdictions": ["US", "EU"], "status": "REGISTERED"},
+            {"name": "NOVAPULSE", "nice_classes": [5],
+             "jurisdictions": ["US"], "status": "PENDING"},
+        ]:
+            existing_row = (
+                await session.execute(
+                    select(Mark).where(
+                        Mark.organization_id == org.id, Mark.name == mark["name"]
+                    )
+                )
+            ).scalars().first()
+            if existing_row is None:
+                session.add(Mark(organization_id=org.id, **mark))
+
         await session.commit()
         print(f"Seeded org={org.id} admin={admin.email} roles={len(roles_by_name)}")
 

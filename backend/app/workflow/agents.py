@@ -51,6 +51,12 @@ class WorkflowAgentOutput:
     target_step: int | None = None
     drafted_response: str = ""
     citations: list[dict] = field(default_factory=list)
+    # Edge specs applied ONLY when a human approves the decision — the
+    # generic executor writes them post-approval in the same transaction.
+    # Shape: {src_type, src_id, label, dst_type, dst_id, properties}.
+    # This is how e.g. the screening result lands on the graph: the human
+    # approving the screening IS the authorization for the write.
+    ontology_writes: list[dict] = field(default_factory=list)
 
 
 WorkflowAgentHandler = Callable[

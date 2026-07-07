@@ -443,6 +443,97 @@ class AICallLog(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Reference + module data for the agent fleet (PRs 10–14)
+# ══════════════════════════════════════════════════════════════════════
+
+
+class SanctionsEntry(Base):
+    """Curated sanctions/debarment reference list (global — not org data).
+
+    Demo rows ship in the seed; the OFAC SDN feed loader (PR 10 follow-up
+    job) upserts into this same table keyed by (list_source, name). Lists
+    change daily — screening results carry the list version they matched.
+    """
+
+    __tablename__ = "sanctions_entry"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    list_source: Mapped[str] = mapped_column(String, nullable=False)  # e.g. OFAC_SDN
+    list_version: Mapped[str] = mapped_column(String, nullable=False, default="demo-1")
+    name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    aliases: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    country: Mapped[str | None] = mapped_column(String, nullable=True)
+    program: Mapped[str | None] = mapped_column(String, nullable=True)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("list_source", "name", name="uq_sanctions_entry_source_name"),
+    )
+
+
+class KnowledgeEntry(Base):
+    """Versioned, approved knowledge — the ONLY corpus the FAQ and Policy
+    agents may quote. Every save is a new version row; exactly one
+    is_current per (org, kind, slug). Answers cite (entry, version)."""
+
+    __tablename__ = "knowledge_entry"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # FAQ | POLICY
+    slug: Mapped[str] = mapped_column(String, nullable=False)
+    topic: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    effective_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    review_due: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "kind", "slug", "version",
+                         name="uq_knowledge_entry_slug_version"),
+        Index("ix_knowledge_entry_current", "organization_id", "kind", "is_current"),
+    )
+
+
+class Mark(Base):
+    """The org's trademark portfolio — what the Trademark agent screens
+    proposed marks against (portfolio context, NOT a registry search)."""
+
+    __tablename__ = "mark"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    nice_classes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    jurisdictions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # REGISTERED | PENDING | ABANDONED
+    status: Mapped[str] = mapped_column(String, nullable=False, default="PENDING")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_mark_org_name"),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Workflow engine (shared package) — governance ladders
 # ══════════════════════════════════════════════════════════════════════
 #
