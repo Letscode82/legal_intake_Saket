@@ -88,12 +88,20 @@ export function makeAuthHandler(): AuthHandler {
     // client tenant), /api/auth/login sends users straight to that IdP
     // instead of the Auth0 universal-login picker. Unset = unchanged.
     const connection = process.env.AUTH0_ENTERPRISE_CONNECTION;
-    const handler = connection
-      ? handleAuth({
-          login: handleLogin({
-            authorizationParams: { connection },
-          }),
-        })
+    // Monorepo split: when AUTH0_AUDIENCE is set (the FastAPI backend's API
+    // identifier), request that audience at login so the resulting access
+    // token is a JWT the backend's JWKS validation accepts. The BFF proxy
+    // (apps/web pages/api/backend) forwards this token as a Bearer header.
+    const audience = process.env.AUTH0_AUDIENCE;
+    const authorizationParams: Record<string, string> = {};
+    if (connection) authorizationParams.connection = connection;
+    if (audience) {
+      authorizationParams.audience = audience;
+      // openid/profile/email for the session; offline_access for refresh.
+      authorizationParams.scope = "openid profile email offline_access";
+    }
+    const handler = Object.keys(authorizationParams).length
+      ? handleAuth({ login: handleLogin({ authorizationParams }) })
       : handleAuth();
     return handler(req, res);
   };

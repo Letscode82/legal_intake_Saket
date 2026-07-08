@@ -25,6 +25,14 @@ Route protection stays in Next.js `middleware.ts`; per-permission UI gating
 hides affordances, but the backend enforces authoritatively on every
 mutation.
 
+### Reference screen: `/console`
+
+`apps/web/pages/console.tsx` is a working, backend-only screen that runs the
+whole loop through the proxy — Legal Front Door → PENDING decision →
+Cockpit approve/reject → Ask the Brain. It's the template to copy when
+migrating other screens, and a fast way to smoke-test the split
+(`/console` in the running frontend). Legacy screens are untouched.
+
 ### Migrating a screen (the incremental path)
 
 The old `pages/api/*` business routes still run on the legacy Prisma stack,
@@ -79,11 +87,18 @@ Backend-only (no Docker): see `backend/README.md`.
 ## Auth0 cutover
 
 The frontend already runs Authorization Code + PKCE and sets the session.
-For the backend to validate tokens, add an **API** in Auth0 (identifier =
-`AUTH0_AUDIENCE`) and request that audience on login so the access token is
-a JWT the backend's JWKS validation accepts. Until Auth0 is configured on
-the backend, dev mode resolves the seeded admin — never enabled in
-production (the config guard blocks it).
+For the backend to validate tokens:
+
+1. In Auth0, create an **API** and copy its identifier.
+2. Set `AUTH0_AUDIENCE` to that identifier on **both** the frontend and the
+   backend. The shared auth handler (`packages/auth/src/api-handler.ts`)
+   now reads `AUTH0_AUDIENCE` and requests it at `/api/auth/login`, so
+   `getAccessToken` returns a JWT for that API; the BFF proxy forwards it as
+   a Bearer header; the backend validates it via JWKS and resolves the
+   User/Org.
+
+Until Auth0 is configured, dev mode resolves the seeded admin — never
+enabled in production (the backend config guard blocks it).
 
 ## Deploy
 
