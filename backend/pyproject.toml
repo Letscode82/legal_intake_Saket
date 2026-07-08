@@ -24,6 +24,11 @@ dev = [
     "pytest-asyncio>=0.25",
     "asgi-lifespan>=2.1",
 ]
+# In-process embeddings (EMBEDDINGS_PROVIDER=local) — no model server to
+# host. fastembed is ONNX-based (no torch), so the install stays light.
+local-embeddings = [
+    "fastembed>=0.3",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

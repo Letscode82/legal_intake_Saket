@@ -41,23 +41,24 @@ class Settings(BaseSettings):
     anthropic_model: str = Field(default="claude-sonnet-4-5", alias="ANTHROPIC_MODEL")
 
     # ── Embeddings (GraphRAG vector leg) ─────────────────────────────
-    # Claude does not embed. Default is a SELF-HOSTED model (BAAI/BGE-M3)
-    # served over HTTP — privileged legal content never leaves our
-    # region/infra (Voyage stays available as a hosted alternative). Unset
-    # provider / unreachable endpoint → retrieval degrades to Postgres
-    # full-text search only, the same discipline as the AI-client degrade.
+    # Claude does not embed. AEGIS runs **BAAI/BGE-M3 self-hosted, in the
+    # FastAPI process** (provider "local") — no separate model server to
+    # host, and privileged legal content never leaves our infra. The model
+    # downloads once to a local cache, then serves from memory.
     #
-    #   EMBEDDINGS_PROVIDER = "bge-m3" | "voyage" | "none"
-    #   EMBEDDINGS_URL      = self-hosted endpoint (HF Text-Embeddings-
-    #                         Inference / OpenAI-compatible). For BGE-M3:
-    #                         docker run ghcr.io/huggingface/text-embeddings-
-    #                         inference --model-id BAAI/bge-m3
-    embeddings_provider: str = Field(default="bge-m3", alias="EMBEDDINGS_PROVIDER")
-    embeddings_url: str | None = Field(default=None, alias="EMBEDDINGS_URL")
-    embeddings_api_key: str | None = Field(default=None, alias="EMBEDDINGS_API_KEY")
+    #   EMBEDDINGS_PROVIDER = "local"  (in-process BGE-M3 — default)
+    #                       | "tei"    (self-hosted HTTP server, if preferred)
+    #                       | "voyage" (hosted API) | "none"
+    #
+    # Install the in-process backend: pip install '.[local-embeddings]'.
+    # Unconfigured / model unfetchable → retrieval degrades to Postgres
+    # full-text search only (same discipline as the AI-client degrade).
+    embeddings_provider: str = Field(default="local", alias="EMBEDDINGS_PROVIDER")
     embeddings_model: str = Field(default="BAAI/bge-m3", alias="EMBEDDINGS_MODEL")
     embeddings_dim: int = Field(default=1024, alias="EMBEDDINGS_DIM")
-
+    # Only for EMBEDDINGS_PROVIDER=tei (self-hosted HTTP inference server).
+    embeddings_url: str | None = Field(default=None, alias="EMBEDDINGS_URL")
+    embeddings_api_key: str | None = Field(default=None, alias="EMBEDDINGS_API_KEY")
     # Hosted fallback provider (optional).
     voyage_api_key: str | None = Field(default=None, alias="VOYAGE_API_KEY")
     voyage_model: str = Field(default="voyage-law-2", alias="VOYAGE_MODEL")
@@ -65,7 +66,9 @@ class Settings(BaseSettings):
     @property
     def embeddings_configured(self) -> bool:
         p = self.embeddings_provider.lower()
-        if p in {"bge-m3", "http"}:
+        if p in {"local", "bge-m3"}:
+            return True  # in-process; runtime-degrades if the model can't load
+        if p in {"tei", "http"}:
             return bool(self.embeddings_url)
         if p == "voyage":
             return bool(self.voyage_api_key)

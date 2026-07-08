@@ -1,12 +1,13 @@
 # Embeddings — the GraphRAG vector leg
 
-AEGIS completes the "brain" with a **self-hosted BAAI/BGE-M3** embedding
-model. For a Fortune-50 legal platform this is deliberate: privileged
-content is embedded in-region on our own infra, never sent to a third-party
-API. BGE-M3 is Apache-2.0 (commercially safe), has an 8192-token context
+AEGIS completes the "brain" with **BAAI/BGE-M3 self-hosted, running in-process**
+— no separate model server to host. For a Fortune-50 legal platform this is
+deliberate: privileged content is embedded on our own infra, never sent to a
+third-party API. BGE-M3 is Apache-2.0 (commercially safe), 8192-token context
 (fits contracts and notices), and its dense+sparse design complements our
 graph + full-text fusion. Jina v3 was rejected (CC-BY-NC — non-commercial);
-Voyage remains available as a hosted alternative.
+a hosted-API (Voyage) and a self-hosted-HTTP (TEI) provider remain available
+behind the same seam.
 
 ## How it fits the pipeline
 
@@ -30,13 +31,28 @@ retrieve: graph k-hop → candidates → FTS+hop score
   pointing `EMBEDDINGS_URL` / `EMBEDDINGS_MODEL` at it — BGE-M3, E5, or a
   future model — no code change.
 
-## Serve BGE-M3
+## Run BGE-M3 in-process (default — no server)
 
+```bash
+pip install '.[local-embeddings]'   # fastembed (ONNX, no torch)
+# backend env (these are the defaults):
+EMBEDDINGS_PROVIDER=local
+EMBEDDINGS_MODEL=BAAI/bge-m3
+```
+The model downloads once to the local cache on first embed, then serves from
+memory. On a memory-tight box, `EMBEDDINGS_MODEL=BAAI/bge-small-en-v1.5`
+(384-dim) — the stored vector length adapts automatically. Air-gapped /
+download-blocked → the provider degrades to FTS-only rather than crashing.
+
+### Alternative: self-hosted HTTP server (TEI)
+
+If you'd rather run embeddings as a separate service (shared across app
+instances):
 ```bash
 docker run -p 8080:80 ghcr.io/huggingface/text-embeddings-inference:latest \
   --model-id BAAI/bge-m3
 # backend env:
-EMBEDDINGS_PROVIDER=bge-m3
+EMBEDDINGS_PROVIDER=tei
 EMBEDDINGS_URL=http://localhost:8080
 ```
 

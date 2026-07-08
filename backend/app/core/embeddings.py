@@ -58,7 +58,7 @@ class HTTPEmbeddingProvider:
       * OpenAI-compat:  POST {"model": m, "input": [...]} -> {"data":[{"embedding":[...]}]}
     """
 
-    name = "bge-m3"
+    name = "tei"
 
     def __init__(self) -> None:
         self.dim = settings.embeddings_dim
@@ -101,6 +101,78 @@ class HTTPEmbeddingProvider:
             return None
 
 
+_LOCAL_MODEL_CACHE: dict[str, object] = {}
+
+
+class LocalEmbeddingProvider:
+    """In-process embeddings — NO server to host.
+
+    Runs the model inside the FastAPI process via ``fastembed`` (ONNX, no
+    torch — light) with a ``sentence-transformers`` fallback. The model is
+    downloaded once to a local cache on first use, then served from memory.
+    Default is ``BAAI/bge-m3`` (1024-dim, 8192 ctx, Apache-2.0). On a
+    memory-constrained box set ``EMBEDDINGS_MODEL=BAAI/bge-small-en-v1.5``
+    (~130 MB, 384-dim) — the stored vector length adapts automatically.
+
+    Degrades to None (FTS-only) if neither library is installed or the model
+    cannot be fetched — so an air-gapped or download-blocked environment
+    never crashes; it just runs without the vector leg.
+
+    Install the extra: ``pip install '.[local-embeddings]'``.
+    """
+
+    name = "local"
+
+    def __init__(self) -> None:
+        self._model_name = settings.embeddings_model
+        self.dim = settings.embeddings_dim
+
+    def _load(self):
+        if self._model_name in _LOCAL_MODEL_CACHE:
+            return _LOCAL_MODEL_CACHE[self._model_name]
+        model = None
+        try:
+            from fastembed import TextEmbedding
+
+            model = ("fastembed", TextEmbedding(model_name=self._model_name))
+        except Exception:  # noqa: BLE001 — try the heavier fallback
+            try:
+                from sentence_transformers import SentenceTransformer
+
+                model = ("st", SentenceTransformer(self._model_name))
+            except Exception:  # noqa: BLE001 — no local backend available
+                logger.warning(
+                    "local embedding backend unavailable (install "
+                    "'.[local-embeddings]' and ensure the model can be "
+                    "fetched); degrading to FTS-only",
+                    exc_info=True,
+                )
+                model = None
+        _LOCAL_MODEL_CACHE[self._model_name] = model
+        return model
+
+    async def embed(self, texts: list[str]) -> list[list[float]] | None:
+        if not texts:
+            return None
+        model = self._load()
+        if model is None:
+            return None
+        kind, impl = model
+        try:
+            # Model inference is CPU-bound; run it off the event loop.
+            import anyio
+
+            def _run() -> list[list[float]]:
+                if kind == "fastembed":
+                    return [list(map(float, v)) for v in impl.embed(texts)]
+                return [list(map(float, v)) for v in impl.encode(texts)]
+
+            return await anyio.to_thread.run_sync(_run)
+        except Exception:  # noqa: BLE001 — degrade on any inference failure
+            logger.warning("local embed failed; degrading to FTS-only", exc_info=True)
+            return None
+
+
 class VoyageEmbeddingProvider:
     name = "voyage"
 
@@ -126,7 +198,11 @@ class VoyageEmbeddingProvider:
 
 def get_embedding_provider() -> EmbeddingProvider:
     provider = settings.embeddings_provider.lower()
-    if provider in {"bge-m3", "http"} and settings.embeddings_url:
+    if provider in {"local", "bge-m3"}:
+        # In-process BGE-M3; no URL/key needed. Runtime-degrades if the model
+        # can't load, so it's safe to select unconditionally.
+        return LocalEmbeddingProvider()
+    if provider in {"tei", "http"} and settings.embeddings_url:
         return HTTPEmbeddingProvider()
     if provider == "voyage" and settings.voyage_api_key:
         return VoyageEmbeddingProvider()
